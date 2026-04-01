@@ -1,67 +1,39 @@
 import { NextResponse } from 'next/server'
-import { Pool } from 'pg'
-
-function getPool() {
-  const connectionString =
-    process.env.POSTGRES_URL ??
-    process.env.DATABASE_URL ??
-    'postgresql://localhost:5432/mood'
-  return new Pool({ connectionString, max: 5 })
-}
+import { prisma } from '@/lib/prisma'
 
 export async function GET() {
-  const pool = getPool()
   try {
     const now = new Date()
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000)
     const thirtyDaysAgo = new Date(startOfDay.getTime() - 30 * 24 * 60 * 60 * 1000)
 
-    const [todayRes, monthRes, dailyRes, todayTotalRes, monthTotalRes] = await Promise.all([
+    const [todayVotes, monthVotes, allVotes30, todayTotal, monthTotal] = await Promise.all([
       // 今日各情緒票數
-      pool.query(
-        `SELECT emotion, category, COUNT(*)::int AS count
-         FROM "EmotionVote"
-         WHERE "createdAt" >= $1 AND "createdAt" < $2
-         GROUP BY emotion, category
-         ORDER BY count DESC`,
-        [startOfDay, endOfDay]
-      ),
+      prisma.emotionVote.groupBy({
+        by: ['emotion', 'category'],
+        where: { createdAt: { gte: startOfDay, lt: endOfDay } },
+        _count: { emotion: true },
+        orderBy: { _count: { emotion: 'desc' } },
+      }),
       // 過去30天各情緒票數
-      pool.query(
-        `SELECT emotion, category, COUNT(*)::int AS count
-         FROM "EmotionVote"
-         WHERE "createdAt" >= $1
-         GROUP BY emotion, category
-         ORDER BY count DESC`,
-        [thirtyDaysAgo]
-      ),
-      // 過去30天每日分類趨勢
-      pool.query(
-        `SELECT
-           "createdAt"::date AS date,
-           category,
-           COUNT(*)::int AS count
-         FROM "EmotionVote"
-         WHERE "createdAt" >= $1
-         GROUP BY "createdAt"::date, category
-         ORDER BY date ASC, category`,
-        [thirtyDaysAgo]
-      ),
-      // 今日總票數
-      pool.query(
-        `SELECT COUNT(*)::int AS total
-         FROM "EmotionVote"
-         WHERE "createdAt" >= $1 AND "createdAt" < $2`,
-        [startOfDay, endOfDay]
-      ),
-      // 過去30天總票數
-      pool.query(
-        `SELECT COUNT(*)::int AS total
-         FROM "EmotionVote"
-         WHERE "createdAt" >= $1`,
-        [thirtyDaysAgo]
-      ),
+      prisma.emotionVote.groupBy({
+        by: ['emotion', 'category'],
+        where: { createdAt: { gte: thirtyDaysAgo } },
+        _count: { emotion: true },
+        orderBy: { _count: { emotion: 'desc' } },
+      }),
+      // 過去30天所有投票（用來算每日趨勢）
+      prisma.emotionVote.findMany({
+        where: { createdAt: { gte: thirtyDaysAgo } },
+        select: { category: true, createdAt: true },
+      }),
+      prisma.emotionVote.count({
+        where: { createdAt: { gte: startOfDay, lt: endOfDay } },
+      }),
+      prisma.emotionVote.count({
+        where: { createdAt: { gte: thirtyDaysAgo } },
+      }),
     ])
 
     // 組裝每日趨勢資料（補齊沒有資料的天）
@@ -70,10 +42,10 @@ export async function GET() {
       const key = d.toISOString().split('T')[0]
       dailyMap[key] = { happy: 0, angry: 0, sad: 0, calm: 0 }
     }
-    for (const row of dailyRes.rows) {
-      const key = new Date(row.date).toISOString().split('T')[0]
-      if (dailyMap[key]) {
-        dailyMap[key][row.category] = row.count
+    for (const vote of allVotes30) {
+      const key = vote.createdAt.toISOString().split('T')[0]
+      if (dailyMap[key] && dailyMap[key][vote.category] !== undefined) {
+        dailyMap[key][vote.category]++
       }
     }
     const dailyTrend = Object.entries(dailyMap).map(([date, cats]) => ({
@@ -83,16 +55,22 @@ export async function GET() {
     }))
 
     return NextResponse.json({
-      today: todayRes.rows,
-      month: monthRes.rows,
+      today: todayVotes.map((v) => ({
+        emotion: v.emotion,
+        category: v.category,
+        count: v._count.emotion,
+      })),
+      month: monthVotes.map((v) => ({
+        emotion: v.emotion,
+        category: v.category,
+        count: v._count.emotion,
+      })),
       dailyTrend,
-      todayTotal: todayTotalRes.rows[0]?.total ?? 0,
-      monthTotal: monthTotalRes.rows[0]?.total ?? 0,
+      todayTotal,
+      monthTotal,
     })
   } catch (error) {
     console.error('Stats error:', error)
     return NextResponse.json({ error: '載入統計資料時發生錯誤' }, { status: 500 })
-  } finally {
-    await pool.end()
   }
 }
