@@ -114,11 +114,21 @@ interface StatItem {
   count: number
 }
 
+interface DailyTrend {
+  date: string
+  happy: number
+  angry: number
+  sad: number
+  calm: number
+  total: number
+}
+
 interface Stats {
   today: StatItem[]
-  allTime: StatItem[]
+  month: StatItem[]
+  dailyTrend: DailyTrend[]
   todayTotal: number
-  allTimeTotal: number
+  monthTotal: number
 }
 
 /* ───────── Component ───────── */
@@ -164,12 +174,16 @@ export default function MoodPage() {
         setVoted(true)
         setVotedEmotion(data.votedEmotion)
         setError(data.error)
+        fetchStats()
+        setTimeout(() => setShowStats(true), 1500)
       } else if (!res.ok) {
         setError(data.error || '發生錯誤')
       } else {
         setVoted(true)
         setVotedEmotion(selectedEmotion.name)
         fetchStats()
+        // 投票成功後 1.5 秒自動跳到統計頁
+        setTimeout(() => setShowStats(true), 1500)
       }
     } catch {
       setError('網路錯誤，請稍後再試')
@@ -301,13 +315,7 @@ export default function MoodPage() {
               <div className="text-center mood-fade-in">
                 <div className="inline-block bg-white rounded-2xl shadow-md border border-gray-100 px-6 py-4">
                   <p className="text-2xl mb-2">✨</p>
-                  <p className="text-gray-700 font-medium">已記錄！明天再來分享心情吧</p>
-                  <button
-                    onClick={() => setShowStats(true)}
-                    className="mt-3 text-orange-500 hover:text-orange-600 text-sm font-medium transition-colors"
-                  >
-                    看看大家今天的心情 &rarr;
-                  </button>
+                  <p className="text-gray-700 font-medium">已記錄！馬上帶你看大家的心情...</p>
                 </div>
               </div>
             )}
@@ -320,7 +328,7 @@ export default function MoodPage() {
 
 /* ───────── Stats Sub-component ───────── */
 function StatsView({ stats }: { stats: Stats | null }) {
-  const [tab, setTab] = useState<'today' | 'allTime'>('today')
+  const [tab, setTab] = useState<'today' | 'month'>('today')
 
   if (!stats) {
     return (
@@ -328,8 +336,8 @@ function StatsView({ stats }: { stats: Stats | null }) {
     )
   }
 
-  const data = tab === 'today' ? stats.today : stats.allTime
-  const total = tab === 'today' ? stats.todayTotal : stats.allTimeTotal
+  const data = tab === 'today' ? stats.today : stats.month
+  const total = tab === 'today' ? stats.todayTotal : stats.monthTotal
   const maxCount = data.length > 0 ? data[0].count : 1
 
   return (
@@ -347,14 +355,14 @@ function StatsView({ stats }: { stats: Stats | null }) {
           今日心情
         </button>
         <button
-          onClick={() => setTab('allTime')}
+          onClick={() => setTab('month')}
           className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-            tab === 'allTime'
+            tab === 'month'
               ? 'bg-orange-500 text-white shadow-md'
               : 'bg-white text-gray-600 hover:bg-gray-50'
           }`}
         >
-          累計統計
+          近 30 天
         </button>
       </div>
 
@@ -362,7 +370,7 @@ function StatsView({ stats }: { stats: Stats | null }) {
       <div className="text-center mb-6">
         <span className="text-4xl font-bold text-gray-800">{total}</span>
         <span className="text-gray-500 ml-2 text-sm">
-          {tab === 'today' ? '人今天分享了心情' : '次心情紀錄'}
+          {tab === 'today' ? '人今天分享了心情' : '人在近 30 天分享了心情'}
         </span>
       </div>
 
@@ -373,8 +381,11 @@ function StatsView({ stats }: { stats: Stats | null }) {
         </div>
       ) : (
         <>
-          {/* Bar Chart */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+          {/* Bar Chart - Emotion Ranking */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mb-4">
+            <h3 className="text-sm font-semibold text-gray-500 mb-4">
+              {tab === 'today' ? '今日心情排行' : '近 30 天心情排行'}
+            </h3>
             <div className="space-y-3">
               {data.slice(0, 15).map((item, i) => {
                 const pct = Math.round((item.count / maxCount) * 100)
@@ -413,7 +424,7 @@ function StatsView({ stats }: { stats: Stats | null }) {
           </div>
 
           {/* Category Summary */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
             {CATEGORY_ORDER.map((key) => {
               const cat = CATEGORIES[key]
               const catTotal = data
@@ -433,8 +444,107 @@ function StatsView({ stats }: { stats: Stats | null }) {
               )
             })}
           </div>
+
+          {/* 30-Day Daily Trend Chart */}
+          {stats.dailyTrend.length > 0 && (
+            <DailyTrendChart data={stats.dailyTrend} />
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+/* ───────── Daily Trend Chart ───────── */
+function DailyTrendChart({ data }: { data: DailyTrend[] }) {
+  const maxTotal = Math.max(...data.map((d) => d.total), 1)
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mood-fade-in">
+      <h3 className="text-sm font-semibold text-gray-500 mb-4">近 30 天每日心情趨勢</h3>
+
+      {/* Legend */}
+      <div className="flex justify-center gap-4 mb-4 text-xs">
+        {CATEGORY_ORDER.map((key) => (
+          <div key={key} className="flex items-center gap-1">
+            <div
+              className="w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: CATEGORY_COLORS[key] }}
+            />
+            <span className="text-gray-500">{CATEGORIES[key].label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Stacked Bar Chart */}
+      <div className="flex items-end gap-[2px] h-40 overflow-x-auto">
+        {data.map((day) => {
+          const dayDate = new Date(day.date)
+          const isToday = day.date === new Date().toISOString().split('T')[0]
+          const dayLabel = `${dayDate.getMonth() + 1}/${dayDate.getDate()}`
+          const heightPct = day.total > 0 ? (day.total / maxTotal) * 100 : 0
+
+          return (
+            <div
+              key={day.date}
+              className="flex-1 min-w-[8px] flex flex-col items-center group relative"
+            >
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-1 hidden group-hover:block z-10">
+                <div className="bg-gray-800 text-white text-xs rounded-lg px-2 py-1.5 whitespace-nowrap shadow-lg">
+                  <div className="font-medium mb-0.5">{dayLabel} ({day.total} 人)</div>
+                  {CATEGORY_ORDER.map((cat) => {
+                    const val = day[cat as keyof DailyTrend] as number
+                    return val > 0 ? (
+                      <div key={cat} className="flex items-center gap-1">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ backgroundColor: CATEGORY_COLORS[cat] }}
+                        />
+                        {CATEGORIES[cat].label}: {val}
+                      </div>
+                    ) : null
+                  })}
+                </div>
+              </div>
+
+              {/* Stacked bars */}
+              <div
+                className="w-full flex flex-col-reverse rounded-t overflow-hidden"
+                style={{ height: `${heightPct}%`, minHeight: day.total > 0 ? '2px' : '0' }}
+              >
+                {CATEGORY_ORDER.map((cat) => {
+                  const val = day[cat as keyof DailyTrend] as number
+                  if (val === 0 || day.total === 0) return null
+                  const segPct = (val / day.total) * 100
+                  return (
+                    <div
+                      key={cat}
+                      style={{
+                        height: `${segPct}%`,
+                        backgroundColor: CATEGORY_COLORS[cat],
+                        minHeight: '1px',
+                      }}
+                    />
+                  )
+                })}
+              </div>
+
+              {/* Date label (show every 5th day + today) */}
+              {(data.indexOf(day) % 5 === 0 || isToday) && (
+                <div className={`text-[9px] mt-1 ${isToday ? 'text-orange-500 font-bold' : 'text-gray-300'}`}>
+                  {dayLabel}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Summary line */}
+      <div className="mt-3 pt-3 border-t border-gray-50 text-center text-xs text-gray-400">
+        過去 30 天共 {data.reduce((s, d) => s + d.total, 0)} 人分享了心情
+      </div>
     </div>
   )
 }
